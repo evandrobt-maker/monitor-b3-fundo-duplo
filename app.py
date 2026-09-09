@@ -1,65 +1,48 @@
+import os
 import pandas as pd
+import streamlit as st
 import yfinance as yf
+
+# ============================================================
+# CONFIGURAÇÕES DA PÁGINA
+# ============================================================
+
+st.set_page_config(
+    page_title="Varredura de Ativos B3",
+    page_icon="📈",
+    layout="centered"
+)
 
 # ============================================================
 # CONFIGURAÇÕES
 # ============================================================
 
-CAMINHO_CSV = r"IBOVDia_300925_sem_duplicadas_rev02.csv"
+ARQUIVO_PADRAO = "IBOVDia_300925_sem_duplicadas_rev02.csv"
 
-# FILTRO 1
-# Se o candle anterior for positivo, o corpo pode representar
-# no máximo 25% da sombra inferior.
+# Candle positivo:
+# corpo pode representar no máximo 25% da sombra inferior
 PERCENTUAL_MAXIMO_CORPO_POSITIVO = 25.0
 
-# FILTRO 2
-# Sombra inferior mínima do candle anterior em relação
-# à amplitude total máxima - mínima.
+# Sombra inferior deve representar pelo menos
+# 25% da amplitude total do candle
 PERCENTUAL_MINIMO_SOMBRA = 25.0
 
-# FILTRO 3
-# A distância entre fechamento anterior e mínima atual
-# deve representar pelo menos 80% da distância entre
-# fechamento anterior e mínima anterior.
+# Mínima atual deve atingir pelo menos 80%
+# da distância entre fechamento anterior e mínima anterior
 PERCENTUAL_MINIMO_REPETICAO = 80.0
 
-# FILTRO 4
-# A distância entre abertura atual e fechamento anterior
-# não pode representar mais de 15% da distância entre
-# fechamento anterior e mínima anterior.
+# Distância entre abertura atual e fechamento anterior
+# não pode superar 15% da distância entre
+# fechamento anterior e mínima anterior
 PERCENTUAL_MAXIMO_DISTANCIA_ABERTURA = 15.0
 
-
 # ============================================================
-# ESCOLHER TEMPO GRÁFICO
-# ============================================================
-
-def escolher_tempo_grafico():
-    while True:
-        print()
-        print("=" * 50)
-        print("ESCOLHA O TEMPO GRÁFICO")
-        print("=" * 50)
-        print("1 - MENSAL")
-        print("2 - TRIMESTRAL")
-        print()
-        escolha = input("Digite 1 ou 2: ").strip()
-
-        if escolha == "1":
-            return "mensal"
-        elif escolha == "2":
-            return "trimestral"
-        else:
-            print("Opção inválida. Digite apenas 1 ou 2.")
-
-
-# ============================================================
-# CARREGAR TICKERS DO CSV
+# CARREGAR TICKERS
 # ============================================================
 
-def carregar_tickers(caminho_csv):
+def carregar_tickers(arquivo):
     df = pd.read_csv(
-        caminho_csv,
+        arquivo,
         header=None,
         names=["Ticker"],
         dtype=str
@@ -90,7 +73,6 @@ def carregar_tickers(caminho_csv):
 
     return list(dict.fromkeys(tickers_normalizados))
 
-
 # ============================================================
 # CALCULAR DISTÂNCIA PERCENTUAL
 # ============================================================
@@ -99,22 +81,10 @@ def calcular_distancia_percentual(referencia, valor):
     if referencia == 0:
         return 0
 
-    distancia = ((referencia - valor) / referencia) * 100
-
-    return distancia
-
+    return ((referencia - valor) / referencia) * 100
 
 # ============================================================
-# CALCULAR TAMANHO DA SOMBRA INFERIOR
-#
-# CANDLE NEGATIVO:
-# sombra = fechamento - mínima
-#
-# CANDLE POSITIVO:
-# sombra = abertura - mínima
-#
-# Forma geral:
-# menor valor entre abertura/fechamento - mínima
+# CALCULAR SOMBRA INFERIOR
 # ============================================================
 
 def calcular_sombra_inferior(abertura, fechamento, minima):
@@ -134,10 +104,8 @@ def calcular_sombra_inferior(abertura, fechamento, minima):
         0
     )
 
-
 # ============================================================
-# CALCULAR PERCENTUAL DA SOMBRA INFERIOR
-# EM RELAÇÃO À AMPLITUDE TOTAL DO CANDLE
+# PERCENTUAL DA SOMBRA INFERIOR
 # ============================================================
 
 def calcular_percentual_sombra_inferior(
@@ -157,28 +125,22 @@ def calcular_percentual_sombra_inferior(
         minima
     )
 
-    percentual = (
+    return (
         sombra_inferior
         /
         amplitude_total
     ) * 100
 
-    return percentual
-
-
 # ============================================================
-# FILTRO PARA CANDLE POSITIVO
+# VERIFICAR CANDLE POSITIVO
 #
-# Se o candle for negativo ou neutro:
-# passa neste filtro.
+# Candle negativo = permitido
 #
-# Se for positivo:
+# Candle neutro = permitido
 #
-# corpo = fechamento - abertura
-# sombra inferior = abertura - mínima
-#
+# Candle positivo:
 # corpo deve representar no máximo 25%
-# da sombra inferior.
+# da sombra inferior
 # ============================================================
 
 def verificar_candle_positivo(
@@ -188,19 +150,21 @@ def verificar_candle_positivo(
 ):
     # Candle negativo
     if fechamento < abertura:
-        return True, 0
+        return True
 
-    # Candle neutro / doji
+    # Candle neutro
     if fechamento == abertura:
-        return True, 0
+        return True
 
     # Candle positivo
     corpo = fechamento - abertura
-    sombra_inferior = abertura - minima
 
-    # Candle positivo sem sombra inferior
+    sombra_inferior = (
+        abertura - minima
+    )
+
     if sombra_inferior <= 0:
-        return False, float("inf")
+        return False
 
     percentual_corpo_sombra = (
         corpo
@@ -208,18 +172,14 @@ def verificar_candle_positivo(
         sombra_inferior
     ) * 100
 
-    passou = (
+    return (
         percentual_corpo_sombra
         <=
         PERCENTUAL_MAXIMO_CORPO_POSITIVO
     )
 
-    return passou, percentual_corpo_sombra
-
-
 # ============================================================
-# CALCULAR DISTÂNCIA DA ABERTURA ATUAL
-# EM RELAÇÃO AO FECHAMENTO ANTERIOR
+# DISTÂNCIA DA ABERTURA ATUAL
 # ============================================================
 
 def calcular_percentual_distancia_abertura(
@@ -242,37 +202,24 @@ def calcular_percentual_distancia_abertura(
         fechamento_anterior
     )
 
-    percentual = (
+    return (
         distancia_abertura
         /
         distancia_fechamento_minima
     ) * 100
 
-    return percentual
-
-
-# ============================================================
-# FORMATAÇÃO
-# ============================================================
-
-def formatar_preco(valor):
-    return f"{valor:.2f}".replace(".", ",")
-
-
-def formatar_percentual(valor):
-    return f"{valor:.2f}%".replace(".", ",")
-
-
-def formatar_volume(valor):
-    return f"{int(valor):,}".replace(",", ".")
-
-
 # ============================================================
 # BUSCAR DADOS NO YAHOO FINANCE
 # ============================================================
 
-def buscar_dados(ticker, tempo_grafico):
-
+@st.cache_data(
+    ttl=1800,
+    show_spinner=False
+)
+def buscar_dados(
+    ticker,
+    tempo_grafico
+):
     # ========================================================
     # MENSAL
     # ========================================================
@@ -290,10 +237,10 @@ def buscar_dados(ticker, tempo_grafico):
     # ========================================================
     # TRIMESTRAL
     #
-    # T1 = janeiro + fevereiro + março
-    # T2 = abril + maio + junho
-    # T3 = julho + agosto + setembro
-    # T4 = outubro + novembro + dezembro
+    # 1º trimestre = JAN + FEV + MAR
+    # 2º trimestre = ABR + MAI + JUN
+    # 3º trimestre = JUL + AGO + SET
+    # 4º trimestre = OUT + NOV + DEZ
     # ========================================================
 
     elif tempo_grafico == "trimestral":
@@ -338,324 +285,363 @@ def buscar_dados(ticker, tempo_grafico):
         return dados_trimestrais
 
     else:
-        raise ValueError("Tempo gráfico inválido.")
-
+        raise ValueError(
+            "Tempo gráfico inválido."
+        )
 
 # ============================================================
-# PROGRAMA PRINCIPAL
+# ANALISAR ATIVO
 # ============================================================
 
-def main():
+def analisar_ativo(
+    ticker,
+    tempo_grafico
+):
+    dados = buscar_dados(
+        ticker,
+        tempo_grafico
+    )
+
+    if dados.empty:
+        return False, "Sem dados no Yahoo Finance"
+
+    dados = dados.dropna(
+        subset=[
+            "Open",
+            "High",
+            "Low",
+            "Close"
+        ]
+    )
+
+    if len(dados) < 2:
+        return False, "Menos de dois candles disponíveis"
 
     # ========================================================
-    # ESCOLHER TEMPO GRÁFICO
+    # CANDLE ATUAL
     # ========================================================
 
-    tempo_grafico = escolher_tempo_grafico()
+    candle_atual = dados.iloc[-1]
 
-    print()
-    print("=" * 80)
-    print("VARREDURA DE ATIVOS B3")
-    print("=" * 80)
-    print(f"Tempo gráfico selecionado: {tempo_grafico.upper()}")
-    print()
+    abertura_atual = float(
+        candle_atual["Open"]
+    )
+
+    minima_atual = float(
+        candle_atual["Low"]
+    )
 
     # ========================================================
-    # CARREGAR ATIVOS
+    # CANDLE ANTERIOR
     # ========================================================
+
+    candle_anterior = dados.iloc[-2]
+
+    abertura_anterior = float(
+        candle_anterior["Open"]
+    )
+
+    maxima_anterior = float(
+        candle_anterior["High"]
+    )
+
+    minima_anterior = float(
+        candle_anterior["Low"]
+    )
+
+    fechamento_anterior = float(
+        candle_anterior["Close"]
+    )
+
+    # ========================================================
+    # EVITAR PREÇOS INVÁLIDOS
+    # ========================================================
+
+    if (
+        abertura_atual <= 0
+        or abertura_anterior <= 0
+        or fechamento_anterior <= 0
+        or minima_anterior <= 0
+        or minima_atual <= 0
+        or maxima_anterior <= 0
+    ):
+        return False, "Preço inválido ou zerado"
+
+    # ========================================================
+    # FILTRO 1
+    #
+    # Candle negativo = permitido
+    #
+    # Candle positivo:
+    # corpo <= 25% da sombra inferior
+    # ========================================================
+
+    formato_candle_valido = (
+        verificar_candle_positivo(
+            abertura_anterior,
+            fechamento_anterior,
+            minima_anterior
+        )
+    )
+
+    # ========================================================
+    # FILTRO 2
+    #
+    # Sombra inferior >= 25%
+    # da amplitude total
+    # ========================================================
+
+    percentual_sombra_anterior = (
+        calcular_percentual_sombra_inferior(
+            abertura_anterior,
+            fechamento_anterior,
+            maxima_anterior,
+            minima_anterior
+        )
+    )
+
+    sombra_minima_25 = (
+        percentual_sombra_anterior
+        >=
+        PERCENTUAL_MINIMO_SOMBRA
+    )
+
+    # ========================================================
+    # FILTRO 3
+    #
+    # DISTÂNCIA:
+    #
+    # fechamento anterior -> mínima anterior
+    # ========================================================
+
+    distancia_anterior = (
+        calcular_distancia_percentual(
+            fechamento_anterior,
+            minima_anterior
+        )
+    )
+
+    # ========================================================
+    # DISTÂNCIA:
+    #
+    # fechamento anterior -> mínima atual
+    # ========================================================
+
+    distancia_minima_atual = (
+        calcular_distancia_percentual(
+            fechamento_anterior,
+            minima_atual
+        )
+    )
+
+    distancia_minima_exigida = (
+        distancia_anterior
+        *
+        (
+            PERCENTUAL_MINIMO_REPETICAO
+            /
+            100
+        )
+    )
+
+    atingiu_80_porcento = (
+        distancia_minima_atual
+        >=
+        distancia_minima_exigida
+    )
+
+    # ========================================================
+    # FILTRO 4
+    #
+    # Distância entre:
+    #
+    # abertura atual -> fechamento anterior
+    #
+    # deve ser no máximo 15% da distância:
+    #
+    # fechamento anterior -> mínima anterior
+    # ========================================================
+
+    percentual_distancia_abertura = (
+        calcular_percentual_distancia_abertura(
+            abertura_atual,
+            fechamento_anterior,
+            minima_anterior
+        )
+    )
+
+    abertura_dentro_limite = (
+        percentual_distancia_abertura
+        <=
+        PERCENTUAL_MAXIMO_DISTANCIA_ABERTURA
+    )
+
+    # ========================================================
+    # RESULTADO FINAL
+    # ========================================================
+
+    passou = (
+        formato_candle_valido
+        and
+        sombra_minima_25
+        and
+        atingiu_80_porcento
+        and
+        abertura_dentro_limite
+    )
+
+    return passou, None
+
+# ============================================================
+# INTERFACE
+# ============================================================
+
+st.title("📈 Varredura de Ativos B3")
+
+st.write(
+    "Escolha o tempo gráfico e execute a análise."
+)
+
+# ============================================================
+# TEMPO GRÁFICO
+# ============================================================
+
+tempo_escolhido = st.radio(
+    "Tempo gráfico:",
+    [
+        "Mensal",
+        "Trimestral"
+    ],
+    horizontal=True
+)
+
+tempo_grafico = (
+    tempo_escolhido.lower()
+)
+
+# ============================================================
+# ARQUIVO CSV
+# ============================================================
+
+st.subheader("Lista de ativos")
+
+arquivo_upload = st.file_uploader(
+    "Selecione o arquivo CSV",
+    type=["csv"]
+)
+
+if arquivo_upload is not None:
+    arquivo_tickers = arquivo_upload
+
+elif os.path.exists(
+    ARQUIVO_PADRAO
+):
+    arquivo_tickers = ARQUIVO_PADRAO
+
+else:
+    arquivo_tickers = None
+
+    st.warning(
+        "Selecione um arquivo CSV "
+        "contendo os códigos dos ativos."
+    )
+
+# ============================================================
+# REGRAS
+# ============================================================
+
+with st.expander(
+    "Ver regras da seleção"
+):
+    st.write(
+        "1. Candle negativo é permitido. "
+        "Se o candle anterior for positivo, "
+        "o corpo deve representar no máximo "
+        "25% da sombra inferior."
+    )
+
+    st.write(
+        "2. A sombra inferior do candle anterior "
+        "deve representar pelo menos 25% "
+        "da amplitude total."
+    )
+
+    st.write(
+        "3. A mínima atual deve atingir pelo menos "
+        "80% da distância entre o fechamento "
+        "anterior e a mínima anterior."
+    )
+
+    st.write(
+        "4. A distância entre a abertura atual "
+        "e o fechamento anterior não pode superar "
+        "15% da distância entre o fechamento "
+        "anterior e a mínima anterior."
+    )
+
+# ============================================================
+# EXECUTAR ANÁLISE
+# ============================================================
+
+if st.button(
+    "Executar análise",
+    type="primary",
+    use_container_width=True
+):
+    if arquivo_tickers is None:
+        st.error(
+            "Selecione um arquivo CSV."
+        )
+
+        st.stop()
 
     try:
-        tickers = carregar_tickers(CAMINHO_CSV)
+        tickers = carregar_tickers(
+            arquivo_tickers
+        )
 
     except Exception as erro:
-        print("ERRO AO CARREGAR CSV:")
-        print(erro)
-        return
+        st.error(
+            f"Erro ao carregar CSV: {erro}"
+        )
 
-    print(f"Total de ativos carregados: {len(tickers)}")
-    print("Buscando dados no Yahoo Finance...")
-    print()
+        st.stop()
 
-    ativos_filtrados = []
+    ativos_encontrados = []
     erros = []
 
-    # ========================================================
-    # ANALISAR CADA ATIVO
-    # ========================================================
+    total = len(tickers)
 
-    for ticker in tickers:
+    barra = st.progress(0)
+
+    status = st.empty()
+
+    for numero, ticker in enumerate(
+        tickers,
+        start=1
+    ):
+        status.write(
+            f"Analisando {numero} de {total}"
+        )
+
         try:
-
-            # =================================================
-            # BUSCAR CANDLES
-            # =================================================
-
-            dados = buscar_dados(
+            passou, erro = analisar_ativo(
                 ticker,
                 tempo_grafico
             )
 
-            if dados.empty:
+            if passou:
+                ativos_encontrados.append(
+                    ticker
+                )
+
+            if erro is not None:
                 erros.append(
                     (
                         ticker,
-                        "Sem dados no Yahoo Finance"
+                        erro
                     )
                 )
-                continue
-
-            dados = dados.dropna(
-                subset=[
-                    "Open",
-                    "High",
-                    "Low",
-                    "Close"
-                ]
-            )
-
-            if len(dados) < 2:
-                erros.append(
-                    (
-                        ticker,
-                        "Menos de dois candles disponíveis"
-                    )
-                )
-                continue
-
-            # =================================================
-            # CANDLE ATUAL
-            # =================================================
-
-            candle_atual = dados.iloc[-1]
-
-            abertura_atual = float(
-                candle_atual["Open"]
-            )
-
-            maxima_atual = float(
-                candle_atual["High"]
-            )
-
-            minima_atual = float(
-                candle_atual["Low"]
-            )
-
-            fechamento_atual = float(
-                candle_atual["Close"]
-            )
-
-            volume_atual = float(
-                candle_atual["Volume"]
-            )
-
-            # =================================================
-            # CANDLE ANTERIOR
-            # =================================================
-
-            candle_anterior = dados.iloc[-2]
-
-            abertura_anterior = float(
-                candle_anterior["Open"]
-            )
-
-            maxima_anterior = float(
-                candle_anterior["High"]
-            )
-
-            minima_anterior = float(
-                candle_anterior["Low"]
-            )
-
-            fechamento_anterior = float(
-                candle_anterior["Close"]
-            )
-
-            volume_anterior = float(
-                candle_anterior["Volume"]
-            )
-
-            # =================================================
-            # EVITAR PREÇOS INVÁLIDOS
-            # =================================================
-
-            if (
-                abertura_atual <= 0
-                or abertura_anterior <= 0
-                or fechamento_anterior <= 0
-                or minima_anterior <= 0
-                or minima_atual <= 0
-                or maxima_anterior <= 0
-            ):
-                erros.append(
-                    (
-                        ticker,
-                        "Preço inválido ou zerado"
-                    )
-                )
-                continue
-
-            # =================================================
-            # FILTRO 1
-            #
-            # O CANDLE ANTERIOR PODE SER:
-            #
-            # NEGATIVO -> permitido
-            #
-            # POSITIVO -> corpo deve representar
-            # no máximo 25% da sombra inferior.
-            #
-            # Corpo positivo:
-            # fechamento - abertura
-            #
-            # Sombra inferior:
-            # abertura - mínima
-            # =================================================
-
-            (
-                formato_candle_valido,
-                percentual_corpo_sombra
-            ) = verificar_candle_positivo(
-                abertura_anterior,
-                fechamento_anterior,
-                minima_anterior
-            )
-
-            # =================================================
-            # FILTRO 2
-            #
-            # SOMBRA INFERIOR DO CANDLE ANTERIOR
-            # DEVE REPRESENTAR PELO MENOS 25%
-            # DA AMPLITUDE TOTAL DO CANDLE
-            # =================================================
-
-            percentual_sombra_anterior = (
-                calcular_percentual_sombra_inferior(
-                    abertura_anterior,
-                    fechamento_anterior,
-                    maxima_anterior,
-                    minima_anterior
-                )
-            )
-
-            sombra_minima_25 = (
-                percentual_sombra_anterior
-                >=
-                PERCENTUAL_MINIMO_SOMBRA
-            )
-
-            # =================================================
-            # FILTRO 3
-            #
-            # DISTÂNCIA ENTRE:
-            #
-            # fechamento anterior -> mínima anterior
-            # =================================================
-
-            distancia_anterior = (
-                calcular_distancia_percentual(
-                    fechamento_anterior,
-                    minima_anterior
-                )
-            )
-
-            # =================================================
-            # DISTÂNCIA ENTRE:
-            #
-            # fechamento anterior -> mínima atual
-            # =================================================
-
-            distancia_minima_atual = (
-                calcular_distancia_percentual(
-                    fechamento_anterior,
-                    minima_atual
-                )
-            )
-
-            distancia_minima_exigida = (
-                distancia_anterior
-                *
-                (
-                    PERCENTUAL_MINIMO_REPETICAO
-                    /
-                    100
-                )
-            )
-
-            atingiu_80_porcento = (
-                distancia_minima_atual
-                >=
-                distancia_minima_exigida
-            )
-
-            if distancia_anterior > 0:
-                percentual_atingido = (
-                    distancia_minima_atual
-                    /
-                    distancia_anterior
-                ) * 100
-            else:
-                percentual_atingido = 0
-
-            # =================================================
-            # FILTRO 4
-            #
-            # DISTÂNCIA ENTRE:
-            #
-            # abertura atual -> fechamento anterior
-            #
-            # NÃO PODE SER MAIOR QUE 15%
-            # DA DISTÂNCIA:
-            #
-            # fechamento anterior -> mínima anterior
-            # =================================================
-
-            percentual_distancia_abertura = (
-                calcular_percentual_distancia_abertura(
-                    abertura_atual,
-                    fechamento_anterior,
-                    minima_anterior
-                )
-            )
-
-            abertura_dentro_limite = (
-                percentual_distancia_abertura
-                <=
-                PERCENTUAL_MAXIMO_DISTANCIA_ABERTURA
-            )
-
-            # =================================================
-            # FILTRO FINAL
-            # =================================================
-
-            if (
-                formato_candle_valido
-                and sombra_minima_25
-                and atingiu_80_porcento
-                and abertura_dentro_limite
-            ):
-
-                ativos_filtrados.append({
-                    "ticker": ticker,
-                    "abertura_atual": abertura_atual,
-                    "maxima_atual": maxima_atual,
-                    "minima_atual": minima_atual,
-                    "fechamento_atual": fechamento_atual,
-                    "volume_atual": volume_atual,
-                    "abertura_anterior": abertura_anterior,
-                    "maxima_anterior": maxima_anterior,
-                    "minima_anterior": minima_anterior,
-                    "fechamento_anterior": fechamento_anterior,
-                    "volume_anterior": volume_anterior,
-                    "sombra_anterior": percentual_sombra_anterior,
-                    "distancia_anterior": distancia_anterior,
-                    "distancia_minima_atual": distancia_minima_atual,
-                    "distancia_minima_exigida": distancia_minima_exigida,
-                    "percentual_atingido": percentual_atingido,
-                    "percentual_distancia_abertura":
-                        percentual_distancia_abertura,
-                    "percentual_corpo_sombra":
-                        percentual_corpo_sombra
-                })
 
         except Exception as erro:
             erros.append(
@@ -665,54 +651,76 @@ def main():
                 )
             )
 
+        barra.progress(
+            numero / total
+        )
+
+    status.empty()
+
     # ========================================================
     # RESULTADOS
     # ========================================================
 
-    print()
-    print("=" * 80)
-    print(
-        f"ATIVOS QUE PASSARAM PELO FILTRO "
-        f"- {tempo_grafico.upper()}"
+    st.divider()
+
+    st.subheader(
+        "Ativos encontrados"
     )
-    print("=" * 80)
 
-    if not ativos_filtrados:
-        print("Nenhum ativo atendeu a todos os critérios.")
+    if ativos_encontrados:
+        st.write(
+            f"**Total: {len(ativos_encontrados)}**"
+        )
+
+        df_resultados = pd.DataFrame({
+            "Ativo": ativos_encontrados
+        })
+
+        st.dataframe(
+            df_resultados,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # ====================================================
+        # DOWNLOAD DOS ATIVOS
+        # ====================================================
+
+        csv_resultado = (
+            df_resultados
+            .to_csv(
+                index=False
+            )
+            .encode(
+                "utf-8-sig"
+            )
+        )
+
+        st.download_button(
+            "Baixar lista em CSV",
+            data=csv_resultado,
+            file_name=(
+                f"ativos_{tempo_grafico}.csv"
+            ),
+            mime="text/csv"
+        )
+
     else:
-        for ativo in ativos_filtrados:
-            print(f"ATIVO: {ativo['ticker']}")
+        st.warning(
+            "Nenhum ativo atendeu "
+            "a todos os critérios."
+        )
 
     # ========================================================
-    # RESUMO
-    # ========================================================
-
-    print()
-    print("=" * 80)
-    print("RESUMO")
-    print("=" * 80)
-    print(f"Tempo gráfico: {tempo_grafico.upper()}")
-    print(f"Ativos analisados: {len(tickers)}")
-    print(f"Ativos encontrados: {len(ativos_filtrados)}")
-    print(f"Ativos ignorados/com erro: {len(erros)}")
-
-    # ========================================================
-    # MOSTRAR ERROS
+    # ERROS
     # ========================================================
 
     if erros:
-        print()
-        print("=" * 80)
-        print("ATIVOS COM ERRO OU SEM DADOS")
-        print("=" * 80)
-
-        for ticker, motivo in erros:
-            print(f"{ticker}: {motivo}")
-
-
-# ============================================================
-# EXECUTAR
-# ============================================================
-
-if __name__ == "__main__":
-    main()
+        with st.expander(
+            f"Ativos sem dados ou com erro: "
+            f"{len(erros)}"
+        ):
+            for ticker, erro in erros:
+                st.write(
+                    f"{ticker}: {erro}"
+                )
