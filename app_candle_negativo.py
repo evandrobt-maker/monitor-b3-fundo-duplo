@@ -7,7 +7,7 @@ import yfinance as yf
 # CONFIGURAÇÕES DA PÁGINA
 # ============================================================
 st.set_page_config(
-    page_title="Varredura de Ativos B3",
+    page_title="Varredura de Candles B3",
     page_icon="📈",
     layout="centered"
 )
@@ -18,14 +18,16 @@ st.set_page_config(
 ARQUIVO_PADRAO = "IBOVDia_300925_sem_duplicadas_rev02.csv"
 
 # REGRA 1
-# Sombra inferior deve representar pelo menos
-# 20% do corpo do candle negativo.
+# Sombra inferior >= 20% do corpo
 PERCENTUAL_MINIMO_SOMBRA_CORPO = 20.0
 
 # REGRA 2
-# Sombra inferior deve representar pelo menos
-# 20% da distância entre máxima e fechamento.
+# Sombra inferior >= 20% da distância máxima - fechamento
 PERCENTUAL_MINIMO_SOMBRA_MAX_FECHAMENTO = 20.0
+
+# REGRA 3
+# Sombra superior <= 15% do corpo
+PERCENTUAL_MAXIMO_SOMBRA_SUPERIOR_CORPO = 15.0
 
 MESES = {
     "Janeiro": 1,
@@ -90,65 +92,38 @@ def remover_timezone(dados):
     return dados
 
 # ============================================================
-# CALCULAR CORPO DO CANDLE NEGATIVO
-#
-# Somente candle negativo:
+# CORPO DO CANDLE NEGATIVO
 #
 # corpo = abertura - fechamento
 # ============================================================
-def calcular_corpo_negativo(
-    abertura,
-    fechamento
-):
-    return (
-        abertura
-        -
-        fechamento
-    )
+def calcular_corpo_negativo(abertura, fechamento):
+    return abertura - fechamento
 
 # ============================================================
-# CALCULAR SOMBRA INFERIOR DO CANDLE NEGATIVO
+# SOMBRA INFERIOR DO CANDLE NEGATIVO
 #
 # sombra inferior = fechamento - mínima
 # ============================================================
-def calcular_sombra_inferior_negativa(
-    fechamento,
-    minima
-):
-    sombra = (
-        fechamento
-        -
-        minima
-    )
+def calcular_sombra_inferior_negativa(fechamento, minima):
+    return max(fechamento - minima, 0)
 
-    return max(
-        sombra,
-        0
-    )
+# ============================================================
+# SOMBRA SUPERIOR DO CANDLE NEGATIVO
+#
+# sombra superior = máxima - abertura
+# ============================================================
+def calcular_sombra_superior_negativa(maxima, abertura):
+    return max(maxima - abertura, 0)
 
 # ============================================================
 # REGRA 1
 #
-# 1. CANDLE OBRIGATORIAMENTE NEGATIVO:
-#
+# Candle obrigatoriamente negativo:
 # fechamento < abertura
 #
-# 2. SOMBRA INFERIOR >= 20% DO CORPO
-#
-# corpo = abertura - fechamento
-#
-# sombra inferior = fechamento - mínima
-#
-# condição:
-#
-# sombra inferior >= corpo × 20%
+# Sombra inferior >= 20% do corpo
 # ============================================================
-def verificar_regra_1(
-    abertura,
-    fechamento,
-    minima
-):
-    # Candle precisa ser negativo
+def verificar_regra_1(abertura, fechamento, minima):
     if fechamento >= abertura:
         return False
 
@@ -157,11 +132,9 @@ def verificar_regra_1(
         fechamento
     )
 
-    sombra_inferior = (
-        calcular_sombra_inferior_negativa(
-            fechamento,
-            minima
-        )
+    sombra_inferior = calcular_sombra_inferior_negativa(
+        fechamento,
+        minima
     )
 
     if corpo <= 0:
@@ -170,41 +143,24 @@ def verificar_regra_1(
     sombra_minima_exigida = (
         corpo
         *
-        (
-            PERCENTUAL_MINIMO_SOMBRA_CORPO
-            /
-            100
-        )
+        PERCENTUAL_MINIMO_SOMBRA_CORPO
+        /
+        100
     )
 
-    return (
-        sombra_inferior
-        >=
-        sombra_minima_exigida
-    )
+    return sombra_inferior >= sombra_minima_exigida
 
 # ============================================================
 # REGRA 2
 #
-# SOMBRA INFERIOR >= 20% DA DISTÂNCIA:
+# Sombra inferior >= 20% da distância:
 #
 # máxima - fechamento
-#
-# condição:
-#
-# sombra inferior >=
-# (máxima - fechamento) × 20%
 # ============================================================
-def verificar_regra_2(
-    maxima,
-    fechamento,
-    minima
-):
-    sombra_inferior = (
-        calcular_sombra_inferior_negativa(
-            fechamento,
-            minima
-        )
+def verificar_regra_2(maxima, fechamento, minima):
+    sombra_inferior = calcular_sombra_inferior_negativa(
+        fechamento,
+        minima
     )
 
     distancia_maxima_fechamento = (
@@ -219,18 +175,48 @@ def verificar_regra_2(
     sombra_minima_exigida = (
         distancia_maxima_fechamento
         *
-        (
-            PERCENTUAL_MINIMO_SOMBRA_MAX_FECHAMENTO
-            /
-            100
-        )
+        PERCENTUAL_MINIMO_SOMBRA_MAX_FECHAMENTO
+        /
+        100
     )
 
-    return (
-        sombra_inferior
-        >=
-        sombra_minima_exigida
+    return sombra_inferior >= sombra_minima_exigida
+
+# ============================================================
+# REGRA 3
+#
+# Sombra superior <= 15% do corpo
+#
+# sombra superior = máxima - abertura
+# corpo = abertura - fechamento
+# ============================================================
+def verificar_regra_3(
+    abertura,
+    maxima,
+    fechamento
+):
+    corpo = calcular_corpo_negativo(
+        abertura,
+        fechamento
     )
+
+    if corpo <= 0:
+        return False
+
+    sombra_superior = calcular_sombra_superior_negativa(
+        maxima,
+        abertura
+    )
+
+    sombra_superior_maxima = (
+        corpo
+        *
+        PERCENTUAL_MAXIMO_SOMBRA_SUPERIOR_CORPO
+        /
+        100
+    )
+
+    return sombra_superior <= sombra_superior_maxima
 
 # ============================================================
 # BUSCAR CANDLE ANTERIOR
@@ -251,8 +237,6 @@ def buscar_candle_anterior(
         freq="M"
     )
 
-    # Busca histórico suficiente para mensal
-    # e para construção dos trimestres.
     data_inicio = (
         periodo_selecionado - 18
     ).start_time
@@ -290,8 +274,6 @@ def buscar_candle_anterior(
     if dados_mensais.empty:
         return None, "Sem candles válidos"
 
-    # Não utilizar meses posteriores
-    # ao período escolhido.
     periodos_mensais = (
         dados_mensais
         .index
@@ -314,9 +296,7 @@ def buscar_candle_anterior(
     # MENSAL
     #
     # Exemplo:
-    #
     # selecionado = outubro/2026
-    #
     # candle analisado = setembro/2026
     # ========================================================
     if tempo_grafico == "mensal":
@@ -356,11 +336,8 @@ def buscar_candle_anterior(
     # T4 = OUT + NOV + DEZ
     #
     # Exemplo:
-    #
     # selecionado = outubro/2026
-    #
-    # candle analisado:
-    # JUL + AGO + SET/2026
+    # candle analisado = JUL + AGO + SET/2026
     # ========================================================
     if tempo_grafico == "trimestral":
 
@@ -388,15 +365,7 @@ def buscar_candle_anterior(
         )
 
         mes_inicio_trimestre = (
-            (
-                (mes - 1)
-                //
-                3
-            )
-            *
-            3
-            +
-            1
+            ((mes - 1) // 3) * 3 + 1
         )
 
         inicio_trimestre_atual = (
@@ -495,44 +464,48 @@ def analisar_ativo(
     # ========================================================
     # REGRA 1
     #
-    # Candle anterior deve ser negativo.
-    #
-    # fechamento < abertura
-    #
+    # Candle negativo
+    # +
     # sombra inferior >= 20% do corpo
     # ========================================================
-    passou_regra_1 = (
-        verificar_regra_1(
-            abertura,
-            fechamento,
-            minima
-        )
+    passou_regra_1 = verificar_regra_1(
+        abertura,
+        fechamento,
+        minima
     )
 
     # ========================================================
     # REGRA 2
     #
     # sombra inferior >= 20% de:
-    #
     # máxima - fechamento
     # ========================================================
-    passou_regra_2 = (
-        verificar_regra_2(
-            maxima,
-            fechamento,
-            minima
-        )
+    passou_regra_2 = verificar_regra_2(
+        maxima,
+        fechamento,
+        minima
+    )
+
+    # ========================================================
+    # REGRA 3
+    #
+    # sombra superior <= 15% do corpo
+    # ========================================================
+    passou_regra_3 = verificar_regra_3(
+        abertura,
+        maxima,
+        fechamento
     )
 
     # ========================================================
     # RESULTADO FINAL
-    #
-    # SOMENTE REGRAS 1 E 2
     # ========================================================
     passou = (
         passou_regra_1
         and
         passou_regra_2
+        and
+        passou_regra_3
     )
 
     return passou, None
@@ -546,7 +519,8 @@ st.title(
 
 st.write(
     "Seleção de candles negativos "
-    "com sombra inferior relevante."
+    "com sombra inferior relevante "
+    "e sombra superior reduzida."
 )
 
 # ============================================================
@@ -623,7 +597,7 @@ periodo_atual = (
 )
 
 # ============================================================
-# MOSTRAR QUAL CANDLE SERÁ ANALISADO
+# MOSTRAR CANDLE ANALISADO
 # ============================================================
 if periodo_selecionado > periodo_atual:
 
@@ -645,15 +619,9 @@ elif tempo_grafico == "mensal":
 else:
 
     mes_inicio_trimestre = (
-        (
-            (mes_selecionado - 1)
-            //
-            3
-        )
-        *
-        3
-        +
-        1
+        ((mes_selecionado - 1) // 3)
+        * 3
+        + 1
     )
 
     inicio_trimestre_atual = pd.Period(
@@ -720,21 +688,19 @@ with st.expander(
 ):
 
     st.write(
-        "1. O candle anterior deve ser negativo: "
-        "fechamento menor que abertura. "
-        "A sombra inferior deve representar pelo menos "
-        "20% do corpo do candle."
+        "1. O candle deve ser negativo: fechamento menor "
+        "que abertura. A sombra inferior deve representar "
+        "pelo menos 20% do corpo."
     )
 
     st.write(
-        "2. A sombra inferior também deve representar "
-        "pelo menos 20% da distância entre "
-        "a máxima e o fechamento do candle."
+        "2. A sombra inferior deve representar pelo menos "
+        "20% da distância entre a máxima e o fechamento."
     )
 
     st.write(
-        "Somente essas duas regras são utilizadas "
-        "na seleção dos ativos."
+        "3. A sombra superior deve representar no máximo "
+        "15% do corpo do candle."
     )
 
 # ============================================================
@@ -889,7 +855,7 @@ if st.button(
 
         st.warning(
             "Nenhum ativo atendeu "
-            "às duas regras."
+            "às três regras."
         )
 
     # ========================================================
