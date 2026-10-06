@@ -17,8 +17,13 @@ st.set_page_config(
 # ============================================================
 ARQUIVO_PADRAO = "IBOVDia_300925_sem_duplicadas_rev02.csv"
 
-PERCENTUAL_MAXIMO_CORPO_POSITIVO = 25.0
-PERCENTUAL_MINIMO_SOMBRA = 25.0
+PERCENTUAL_MAXIMO_CORPO_POSITIVO = 20.0
+
+# FILTRO 2:
+# sombra inferior >= 20% da distância
+# entre a máxima e o fechamento anterior
+PERCENTUAL_MINIMO_SOMBRA = 20.0
+
 PERCENTUAL_MINIMO_REPETICAO = 80.0
 PERCENTUAL_MAXIMO_DISTANCIA_FECHAMENTO = 10.0
 PERCENTUAL_MAXIMO_DISTANCIA_ABERTURA = 15.0
@@ -75,7 +80,7 @@ def carregar_tickers(arquivo):
     return list(dict.fromkeys(tickers_normalizados))
 
 # ============================================================
-# DISTÂNCIA PERCENTUAL
+# CALCULAR DISTÂNCIA PERCENTUAL
 # ============================================================
 def calcular_distancia_percentual(referencia, valor):
     if referencia == 0:
@@ -84,7 +89,16 @@ def calcular_distancia_percentual(referencia, valor):
     return ((referencia - valor) / referencia) * 100
 
 # ============================================================
-# SOMBRA INFERIOR
+# CALCULAR SOMBRA INFERIOR
+#
+# Candle positivo:
+# abertura - mínima
+#
+# Candle negativo:
+# fechamento - mínima
+#
+# Forma geral:
+# min(abertura, fechamento) - mínima
 # ============================================================
 def calcular_sombra_inferior(
     abertura,
@@ -108,46 +122,90 @@ def calcular_sombra_inferior(
     )
 
 # ============================================================
-# PERCENTUAL DA SOMBRA INFERIOR
+# FILTRO 2
+#
+# NOVA REGRA:
+#
+# sombra inferior >= 25% de:
+#
+# máxima anterior - fechamento anterior
+#
+# Exemplo:
+#
+# máxima = 30
+# fechamento = 26
+#
+# diferença = 4
+#
+# 25% de 4 = 1
+#
+# sombra inferior precisa ser >= 1
 # ============================================================
-def calcular_percentual_sombra_inferior(
+def verificar_sombra_inferior(
     abertura,
     fechamento,
     maxima,
     minima
 ):
-    amplitude_total = maxima - minima
-
-    if amplitude_total <= 0:
-        return 0
-
     sombra_inferior = calcular_sombra_inferior(
         abertura,
         fechamento,
         minima
     )
 
+    distancia_maxima_fechamento = (
+        maxima
+        -
+        fechamento
+    )
+
+    if distancia_maxima_fechamento < 0:
+        return False
+
+    sombra_minima_exigida = (
+        distancia_maxima_fechamento
+        *
+        (
+            PERCENTUAL_MINIMO_SOMBRA
+            /
+            100
+        )
+    )
+
     return (
         sombra_inferior
-        /
-        amplitude_total
-    ) * 100
+        >=
+        sombra_minima_exigida
+    )
 
 # ============================================================
 # VERIFICAR CANDLE POSITIVO
+#
+# Candle negativo ou neutro:
+# permitido.
+#
+# Candle positivo:
+# corpo <= 20% da sombra inferior.
 # ============================================================
 def verificar_candle_positivo(
     abertura,
     fechamento,
     minima
 ):
-    # Candle negativo ou neutro
     if fechamento <= abertura:
         return True
 
-    # Candle positivo
-    corpo = fechamento - abertura
-    sombra_inferior = abertura - minima
+    corpo = (
+        fechamento
+        -
+        abertura
+    )
+
+    sombra_inferior = (
+        abertura
+        -
+        minima
+    )
 
     if sombra_inferior <= 0:
         return False
@@ -201,8 +259,8 @@ def calcular_percentual_distancia_abertura(
 # fechamento anterior - fechamento atual
 # <= 10% de D
 #
-# Se o fechamento atual ultrapassar o fechamento anterior,
-# também passa.
+# Se o fechamento atual ultrapassar
+# o fechamento anterior, também passa.
 # ============================================================
 def verificar_retomada_fechamento(
     fechamento_atual,
@@ -278,14 +336,12 @@ def buscar_candles_analise(
         freq="M"
     )
 
-    # Busca meses suficientes para montar
-    # também o trimestre anterior.
+    # Busca histórico suficiente
+    # para formar o trimestre anterior.
     data_inicio = (
         periodo_selecionado - 18
     ).start_time
 
-    # Busca até depois do mês escolhido,
-    # mas posteriormente eliminamos qualquer mês futuro.
     data_fim = (
         periodo_selecionado + 1
     ).start_time + pd.Timedelta(days=2)
@@ -334,9 +390,7 @@ def buscar_candles_analise(
         )
 
     # ========================================================
-    # ELIMINAR MESES POSTERIORES AO PERÍODO ESCOLHIDO
-    #
-    # Importante para estudos históricos.
+    # ELIMINAR MESES POSTERIORES AO PERÍODO SELECIONADO
     # ========================================================
     periodos_mensais = (
         dados_mensais
@@ -361,10 +415,10 @@ def buscar_candles_analise(
     #
     # Exemplo:
     #
-    # Selecionado = fevereiro/2026
+    # selecionado = fevereiro/2026
     #
-    # atual    = fevereiro/2026
     # anterior = janeiro/2026
+    # atual = fevereiro/2026
     # ========================================================
     if tempo_grafico == "mensal":
 
@@ -417,18 +471,20 @@ def buscar_candles_analise(
     # ========================================================
     # TRIMESTRAL
     #
+    # T1 = JAN + FEV + MAR
+    # T2 = ABR + MAI + JUN
+    # T3 = JUL + AGO + SET
+    # T4 = OUT + NOV + DEZ
+    #
     # O trimestre atual é montado somente
     # até o mês escolhido.
     #
     # Exemplo:
     #
-    # fevereiro/2026:
+    # outubro/2026:
     #
-    # trimestre atual = janeiro + fevereiro
-    #
-    # março NÃO é utilizado.
-    #
-    # trimestre anterior = outubro + novembro + dezembro/2025
+    # anterior = JUL + AGO + SET
+    # atual = OUT
     # ========================================================
     if tempo_grafico == "trimestral":
 
@@ -591,7 +647,7 @@ def analisar_ativo(
     )
 
     # ========================================================
-    # EVITAR PREÇOS INVÁLIDOS
+    # PREÇOS INVÁLIDOS
     # ========================================================
     if (
         abertura_atual <= 0
@@ -610,10 +666,11 @@ def analisar_ativo(
     # ========================================================
     # FILTRO 1
     #
-    # Candle anterior negativo ou neutro = permitido
+    # Candle anterior negativo ou neutro:
+    # permitido.
     #
     # Se positivo:
-    # corpo <= 25% da sombra inferior
+    # corpo <= 20% da sombra inferior.
     # ========================================================
     formato_candle_valido = (
         verificar_candle_positivo(
@@ -624,13 +681,18 @@ def analisar_ativo(
     )
 
     # ========================================================
-    # FILTRO 2
+    # FILTRO 2 - MODIFICADO
     #
-    # Sombra inferior anterior >= 25%
-    # da amplitude total
+    # SOMBRA INFERIOR
+    #
+    # sombra inferior >= 20% da distância:
+    #
+    # máxima anterior - fechamento anterior
+    #
+    # A distância máxima-mínima NÃO é mais usada.
     # ========================================================
-    percentual_sombra_anterior = (
-        calcular_percentual_sombra_inferior(
+    sombra_minima_25 = (
+        verificar_sombra_inferior(
             abertura_anterior,
             fechamento_anterior,
             maxima_anterior,
@@ -638,21 +700,17 @@ def analisar_ativo(
         )
     )
 
-    sombra_minima_25 = (
-        percentual_sombra_anterior
-        >=
-        PERCENTUAL_MINIMO_SOMBRA
-    )
-
     # ========================================================
     # FILTRO 3
     #
     # SEGUNDO FUNDO
     #
-    # A mínima atual precisa atingir pelo menos
-    # 80% da distância:
+    # Distância anterior:
     #
     # fechamento anterior -> mínima anterior
+    #
+    # A mínima atual deve atingir pelo menos
+    # 80% dessa distância.
     # ========================================================
     distancia_anterior = (
         calcular_distancia_percentual(
@@ -709,8 +767,13 @@ def analisar_ativo(
     # ========================================================
     # FILTRO 5
     #
-    # Abertura atual próxima
-    # do fechamento anterior
+    # ABERTURA ATUAL
+    #
+    # A distância absoluta entre abertura atual
+    # e fechamento anterior não pode superar
+    # 15% da distância:
+    #
+    # fechamento anterior -> mínima anterior
     # ========================================================
     percentual_distancia_abertura = (
         calcular_percentual_distancia_abertura(
@@ -833,9 +896,13 @@ periodo_atual = (
 )
 
 # ============================================================
-# MOSTRAR O QUE SERÁ COMPARADO
+# MOSTRAR PERÍODO ANALISADO
 # ============================================================
-if periodo_selecionado > periodo_atual:
+if (
+    periodo_selecionado
+    >
+    periodo_atual
+):
 
     st.warning(
         "O período selecionado "
@@ -866,12 +933,43 @@ else:
         3
     ) + 1
 
+    mes_inicio_trimestre = (
+        (
+            (mes_selecionado - 1)
+            //
+            3
+        )
+        *
+        3
+        +
+        1
+    )
+
+    inicio_trimestre = pd.Period(
+        year=ano_selecionado,
+        month=mes_inicio_trimestre,
+        freq="M"
+    )
+
+    inicio_trimestre_anterior = (
+        inicio_trimestre - 3
+    )
+
+    fim_trimestre_anterior = (
+        inicio_trimestre - 1
+    )
+
     st.info(
+        f"Trimestre anterior: "
+        f"{inicio_trimestre_anterior.strftime('%m/%Y')} "
+        f"até "
+        f"{fim_trimestre_anterior.strftime('%m/%Y')} "
+        f" | "
         f"Trimestre analisado: "
-        f"{numero_trimestre}º trimestre "
-        f"de {ano_selecionado}, "
-        f"considerando dados somente "
-        f"até {nome_mes_selecionado}/"
+        f"{numero_trimestre}º trimestre de "
+        f"{ano_selecionado}, "
+        f"considerando dados até "
+        f"{nome_mes_selecionado}/"
         f"{ano_selecionado}."
     )
 
@@ -920,48 +1018,43 @@ with st.expander(
 ):
 
     st.write(
-        "1. Candle anterior negativo ou neutro "
-        "é permitido. Se for positivo, o corpo "
-        "deve representar no máximo 25% "
-        "da sombra inferior."
+        "1. Candle anterior negativo ou neutro é permitido. "
+        "Se o candle anterior for positivo, o corpo deve "
+        "representar no máximo 20% da sombra inferior."
     )
 
     st.write(
-        "2. A sombra inferior do candle anterior "
-        "deve representar pelo menos 25% "
-        "da amplitude total."
+        "2. A sombra inferior do candle anterior deve ser "
+        "pelo menos 20% da distância entre a máxima e "
+        "o fechamento do candle anterior."
     )
 
     st.write(
-        "3. A mínima do período analisado deve "
-        "atingir pelo menos 80% da distância "
-        "entre o fechamento anterior "
-        "e a mínima anterior."
-    )
-
-    st.write(
-        "4. O fechamento do período analisado "
-        "deve ficar a no máximo 10% da distância "
-        "entre o fechamento anterior "
-        "e a mínima anterior abaixo do "
-        "fechamento anterior. "
-        "Se ultrapassar o fechamento anterior, "
-        "também passa."
-    )
-
-    st.write(
-        "5. A distância entre a abertura "
-        "do período analisado e o fechamento "
-        "anterior não pode superar 15% "
-        "da distância entre o fechamento "
+        "3. A mínima do período analisado deve atingir "
+        "pelo menos 80% da distância entre o fechamento "
         "anterior e a mínima anterior."
     )
 
     st.write(
-        "No modo trimestral, o trimestre atual "
-        "é calculado somente até o mês escolhido, "
-        "para não utilizar meses futuros "
-        "em estudos históricos."
+        "4. O fechamento do período analisado deve ficar "
+        "a no máximo 10% da distância entre o fechamento "
+        "anterior e a mínima anterior abaixo do fechamento "
+        "anterior. Se ultrapassar o fechamento anterior, "
+        "também passa."
+    )
+
+    st.write(
+        "5. A distância entre a abertura do período analisado "
+        "e o fechamento anterior não pode superar 15% "
+        "da distância entre o fechamento anterior "
+        "e a mínima anterior."
+    )
+
+    st.write(
+        "No modo trimestral, os trimestres seguem "
+        "jan-mar, abr-jun, jul-set e out-dez. "
+        "O trimestre analisado utiliza somente os meses "
+        "até o mês escolhido."
     )
 
 # ============================================================
@@ -1032,13 +1125,11 @@ if st.button(
 
         try:
 
-            passou, erro = (
-                analisar_ativo(
-                    ticker,
-                    tempo_grafico,
-                    ano_selecionado,
-                    mes_selecionado
-                )
+            passou, erro = analisar_ativo(
+                ticker,
+                tempo_grafico,
+                ano_selecionado,
+                mes_selecionado
             )
 
             if passou:
